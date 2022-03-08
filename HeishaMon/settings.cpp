@@ -29,6 +29,7 @@ const char* Settings::s0_2_ppkwh = "s0_2_ppkwh";
 const char* Settings::s0_2_interval = "s0_2_interval";
 const char* Settings::show_all_topics = "show_all_topics";
 const char* Settings::selected_topics = "selected_topics";
+const char* Settings::anti_freeze_temp = "anti_freeze_temp";
 
 const char* enabled = "enabled";
 const char* disabled = "disabled";
@@ -75,7 +76,8 @@ void SettingsStruct::fromJson(JsonDocument& jsonDoc)
     if (jsonDoc[Settings::s0_1_interval]) s0Settings[0].lowerPowerInterval = jsonDoc[Settings::s0_1_interval];
     if (jsonDoc[Settings::s0_2_gpio]) s0Settings[1].gpiopin = jsonDoc[Settings::s0_2_gpio];
     if (jsonDoc[Settings::s0_2_ppkwh]) s0Settings[1].ppkwh = jsonDoc[Settings::s0_2_ppkwh];
-    if (jsonDoc[Settings::s0_2_interval] ) s0Settings[1].lowerPowerInterval = jsonDoc[Settings::s0_2_interval];
+    if (jsonDoc[Settings::s0_2_interval]) s0Settings[1].lowerPowerInterval = jsonDoc[Settings::s0_2_interval];
+    if (jsonDoc[Settings::anti_freeze_temp]) anti_freeze_temp = jsonDoc[Settings::anti_freeze_temp]; 
     if (jsonDoc[Settings::selected_topics]) {
         JsonArray jsonSelectedTopics = jsonDoc[Settings::selected_topics].as<JsonArray>();
         selected_topics_count = jsonSelectedTopics.size();
@@ -107,6 +109,7 @@ void SettingsStruct::toJson(JsonDocument& jsonDoc)
     jsonDoc[Settings::waitDallasTime] = waitDallasTime;
     jsonDoc[Settings::updateAllTime] = updateAllTime;
     jsonDoc[Settings::updateAllDallasTime] = updateAllDallasTime;
+    jsonDoc[Settings::anti_freeze_temp] = anti_freeze_temp;
 
     JsonArray jsonSelectedTopics = jsonDoc[Settings::selected_topics].to<JsonArray>();
     copyArray(selected_topics, selected_topics_count, jsonSelectedTopics);

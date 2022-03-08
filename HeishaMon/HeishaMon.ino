@@ -39,6 +39,7 @@ ESP8266HTTPUpdateServer httpUpdater;
 
 SettingsStruct heishamonSettings;
 
+bool debugOutputOnSerial = false;
 bool sending = false; // mutex for sending data
 bool mqttcallbackinprogress = false; // mutex for processing mqtt callback
 
@@ -71,6 +72,9 @@ String actOptData[NUMBER_OF_OPT_TOPICS];
 
 Stats selectedTopicStats[MAX_SELECTED_TOPICS];
 uint32_t selectedTopicStatsUpdates = 0;
+
+uint32_t antiFreezeControlStartMillis = 0;
+uint32_t antiFreezeControlDuration = 0;
 
 // log message to sprintf to
 char log_msg[256];
@@ -287,6 +291,70 @@ void updateSelectedTopicStats() {
   #endif
 }
 
+void antiFreezeControl() {
+  int antiFreezeOnTemp = heishamonSettings.anti_freeze_temp;
+  int antiFreezeOffTemp = antiFreezeOnTemp + 5;
+
+  int inletTemp = actData[Topic::Main_Inlet_Temp].toInt();
+  int outletTemp = actData[Topic::Main_Outlet_Temp].toInt();
+  int hexOutletTemp = actData[Topic::Main_Hex_Outlet_Temp].toInt();
+  int compressorFreq = actData[Topic::Compressor_Freq].toInt();
+
+  unsigned int cmdLength = 0;
+  unsigned char cmdBuf[256] = { 0 };
+  char logMessage[256] = { 0 };
+
+  if (antiFreezeControlStartMillis == 0) {
+    // Anti-freeze control is not active (yet)
+    if ((inletTemp <= antiFreezeOnTemp) || (outletTemp <= antiFreezeOnTemp) || (hexOutletTemp <= antiFreezeOnTemp)) {
+      antiFreezeControlStartMillis = millis();
+      log_message("Anti-freeze control activated.");
+      char arg[] = "1"; // pump on
+      cmdLength = set_pump(arg, cmdBuf, logMessage);
+    }  
+  }
+  else {
+    // Anti-freeze control is active
+    if ((inletTemp > antiFreezeOffTemp) && (outletTemp > antiFreezeOffTemp) && (hexOutletTemp > antiFreezeOffTemp)) {
+      antiFreezeControlDuration += (millis() - antiFreezeControlStartMillis) / 1000;
+      antiFreezeControlStartMillis = 0;
+      log_message("Anti-freeze control deactivated.");
+
+      // Don't stop pump if compressor started in the meantime.
+      if (compressorFreq == 0) {
+        char arg[] = "0"; // pump off
+        cmdLength = set_pump(arg, cmdBuf, logMessage);
+      } else {
+        log_message("Leave pump running since compressor is on.");
+      }
+    }  
+  }
+
+  if (cmdLength != 0) {
+    log_message(logMessage);
+    send_command(cmdBuf, cmdLength);
+  }
+}
+
+#ifdef DEBUG_ESP_PORT
+bool handleTestCommand(String testCmd) {
+  DEBUG_ESP_PORT.printf("\nReceived test command: '%s'\n", testCmd.c_str());
+  int equalsIndex = testCmd.indexOf("=");
+  if (equalsIndex < 2 ) {
+    DEBUG_ESP_PORT.println("Invalid syntax.");
+    return false;
+  }
+  int topicId = testCmd.substring(1, equalsIndex).toInt();
+  String topicValue = testCmd.substring(equalsIndex + 1);
+  actData[topicId] = topicValue;
+
+  char logMessage[32];
+  snprintf(logMessage, sizeof(logMessage), "Set value for TOP%d to '%s'", topicId, topicValue.c_str());
+  log_message(logMessage);
+  return true;
+}
+#endif
+
 bool readSerial()
 {
   if (data_length == 0 ) totalreads++; //this is the start of a new read
@@ -294,6 +362,18 @@ bool readSerial()
   while ((Serial.available()) && (data_length < MAXDATASIZE)) {
     data[data_length] = Serial.read(); //read available data and place it after the last received data
     data_length++;
+    #ifdef DEBUG_ESP_PORT
+    if (debugOutputOnSerial && data[0] == 'T') {
+        if (data[data_length - 1] != '\n') continue;
+        data[data_length - 1] = 0;
+        String testCmd = String(data);
+        data_length = 0;
+        if (handleTestCommand(testCmd) == false) return false;
+        updateSelectedTopicStats();
+        antiFreezeControl();
+        return true;
+    }
+    #endif
     if (data[0] != 113) { //wrong header received!
       log_message((char*)"Received bad header. Ignoring this data!");
       if (heishamonSettings.logHexdump) logHex(data, data_length);
@@ -330,6 +410,7 @@ bool readSerial()
         data_length = 0;
         decode_heatpump_data(data, actData, mqtt_client, log_message, heishamonSettings.mqtt_topic_base, heishamonSettings.updateAllTime);
         updateSelectedTopicStats();
+        antiFreezeControl();
         return true;
       }
       else if (data_length == 20 ) { //optional pcb acknowledge answer
@@ -460,7 +541,7 @@ void setupOTA() {
 void setupHttp() {
   httpUpdater.setup(&httpServer, heishamonSettings.update_path, heishamonSettings.update_username, heishamonSettings.ota_password);
   httpServer.on("/", [] {
-    handleRoot(&httpServer, readpercentage, mqttReconnects, &heishamonSettings);
+    handleRoot(&httpServer, readpercentage, mqttReconnects, antiFreezeControlDuration, &heishamonSettings);
   });
   httpServer.on("/command", [] {
     handleREST(&httpServer, heishamonSettings.optionalPCB);
@@ -650,7 +731,6 @@ void setup() {
   setupMqtt();
   setupHttp();
 
-  bool debugOutputOnSerial = false;
   #ifdef DEBUG_ESP_PORT
   debugOutputOnSerial = (&DEBUG_ESP_PORT == &Serial);
   #endif

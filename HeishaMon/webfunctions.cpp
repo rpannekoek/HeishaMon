@@ -177,7 +177,7 @@ void setupWifi(SettingsStruct *heishamonSettings) {
   WiFi.scanNetworksAsync(getWifiScanResults);
 }
 
-void handleRoot(ESP8266WebServer *httpServer, float readpercentage, int mqttReconnects, SettingsStruct *heishamonSettings) {
+void handleRoot(ESP8266WebServer *httpServer, float readpercentage, int mqttReconnects, uint32_t antiFreezeControlDuration, SettingsStruct *heishamonSettings) {
   httpServer->setContentLength(CONTENT_LENGTH_UNKNOWN);
   httpServer->send(200, "text/html", "");
   httpServer->sendContent_P(webHeader);
@@ -203,6 +203,10 @@ void handleRoot(ESP8266WebServer *httpServer, float readpercentage, int mqttReco
   httpServer->sendContent(String(mqttReconnects));
   httpServer->sendContent_P(webBodyRootStatusUptime);
   httpServer->sendContent(getUptime());
+  String html = F("<br>Anti-freeze control: ");
+  html += antiFreezeControlDuration;
+  html += " s";
+  httpServer->sendContent(html);
   httpServer->sendContent_P(webBodyEndDiv);
 
   httpServer->sendContent_P(webBodyRootHeatpumpHeader);
@@ -465,6 +469,9 @@ bool handleSettings(ESP8266WebServer *httpServer, SettingsStruct *heishamonSetti
     if (httpServer->hasArg(Settings::updateAllDallasTime)) {
       jsonDoc[Settings::updateAllDallasTime] = httpServer->arg(Settings::updateAllDallasTime);
     }
+    if (httpServer->hasArg(Settings::anti_freeze_temp)) {
+      jsonDoc[Settings::anti_freeze_temp] = atoi(httpServer->arg(Settings::anti_freeze_temp).c_str());
+    }
 
     saveJsonToConfig(jsonDoc); //save to config file
     loadSettings(heishamonSettings); //load config file to current settings
@@ -560,6 +567,9 @@ bool handleSettings(ESP8266WebServer *httpServer, SettingsStruct *heishamonSetti
   html += F("</td></tr><tr><td style=\"text-align:right; width: 50%\">");
   html += F("How often all heatpump values are retransmitted to MQTT broker:</td><td style=\"text-align:left\">");
   html += Html::textBox(Settings::updateAllTime, String(heishamonSettings->updateAllTime), "number");
+  html += F("</td></tr><tr><td style=\"text-align:right; width: 50%\">");
+  html += F("Anti-freeze temperature:</td><td style=\"text-align:left\">");
+  html += Html::textBox(Settings::anti_freeze_temp, String(heishamonSettings->anti_freeze_temp), "number");
   html += F("</td></tr><tr><td style=\"text-align:right; width: 50%\">");
 
   httpServer->sendContent(html);
@@ -847,7 +857,7 @@ void handleSmartcontrol(ESP8266WebServer *httpServer, SettingsStruct *heishamonS
     }
   }
 
-  String heatingModeStr = actData[76];
+  String heatingModeStr = actData[Topic::Heating_Mode];
   int heatingMode = (heatingModeStr.length() > 0) ? heatingModeStr.toInt() : 1;
   if (heatingMode == 1) {
     html = F("<div class=\"w3-row-padding\"><div class=\"w3-half\">");
